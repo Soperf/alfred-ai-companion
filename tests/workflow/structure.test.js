@@ -15,7 +15,7 @@ test('build generates an importable Alfred Workflow skeleton', () => {
   execFileSync(process.execPath, ['scripts/build.mjs'], { cwd: projectRoot, stdio: 'pipe' });
   execFileSync('/usr/bin/plutil', ['-lint', join(workflowDirectory, 'info.plist')], { stdio: 'pipe' });
 
-  for (const scriptName of ['chat', 'translate', 'translate-view']) {
+  for (const scriptName of ['chat', 'chat-actions', 'translate', 'translate-view']) {
     const scriptPath = join(workflowDirectory, scriptName);
     assert.equal(existsSync(scriptPath), true);
     assert.match(readFileSync(scriptPath, 'utf8'), /^#!\/usr\/bin\/osascript -l JavaScript/);
@@ -62,6 +62,36 @@ test('build generates an importable Alfred Workflow skeleton', () => {
     modifiersubtext: '',
     vitoclose: false,
   }]);
+
+  const newChatConnection = workflowConnections.CHAT_TEXT_VIEW.find(
+    (connection) => connection.modifiers === 1048576,
+  );
+  assert.equal(newChatConnection.destinationuid, 'CHAT_ACTION_NEW');
+  assert.equal(newChatConnection.vitoclose, true);
+
+  const clearFilter = workflowObjects.find((workflowObject) => workflowObject.uid === 'CHAT_CLEAR_FILTER');
+  assert.equal(clearFilter.type, 'alfred.workflow.input.scriptfilter');
+  assert.equal(clearFilter.config.keyword, 'ai-clear');
+  assert.match(clearFilter.config.script, /Confirm clearing all chat history/);
+
+  const newChatAction = workflowObjects.find((workflowObject) => workflowObject.uid === 'CHAT_ACTION_NEW');
+  const clearAllAction = workflowObjects.find((workflowObject) => workflowObject.uid === 'CHAT_ACTION_CLEAR_ALL');
+  assert.match(newChatAction.config.script, /executeChatAction\('new'\)/);
+  assert.match(clearAllAction.config.script, /executeChatAction\('clear-all'\)/);
+  assert.equal(workflowConnections.CHAT_CLEAR_FILTER[0].destinationuid, 'CHAT_ACTION_CLEAR_ALL');
+  assert.equal(workflowConnections.CHAT_ACTION_NEW[0].destinationuid, 'CHAT_NEW_NOTIFICATION');
+  assert.equal(workflowConnections.CHAT_ACTION_CLEAR_ALL[0].destinationuid, 'CHAT_CLEAR_NOTIFICATION');
+});
+
+test('generated chat action entry terminates only a validated positive process identifier', () => {
+  execFileSync(process.execPath, ['scripts/build.mjs'], { cwd: projectRoot, stdio: 'pipe' });
+  const scriptText = readFileSync(join(workflowDirectory, 'chat-actions'), 'utf8');
+
+  assert.match(scriptText, /^#!\/usr\/bin\/osascript -l JavaScript/);
+  assert.equal(scriptText.includes('/^[1-9]\\d*$/' + '.test(processIdentifier)'), true);
+  assert.match(scriptText, /executableURL = \$\.NSURL\.fileURLWithPath\('\/bin\/kill'\)/);
+  assert.match(scriptText, /arguments = \['-TERM', processIdentifier\]/);
+  assert.doesNotMatch(scriptText, /doShellScript/);
 });
 
 test('README documents streaming chat as available', () => {

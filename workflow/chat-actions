@@ -1,0 +1,82 @@
+#!/usr/bin/osascript -l JavaScript
+/** Generated Workflow entry. @author xiaopeng.fxp @date 2026-07-13 */
+
+function environmentValue(variableName) {
+  const value = $.NSProcessInfo.processInfo.environment.objectForKey(variableName);
+  return value ? value.js : '';
+}
+function fileExists(path) {
+  return $.NSFileManager.defaultManager.fileExistsAtPath(path);
+}
+function ensureDirectory(path) {
+  $.NSFileManager.defaultManager.createDirectoryAtPathWithIntermediateDirectoriesAttributesError(path, true, undefined, undefined);
+}
+function readText(path) {
+  return $.NSString.stringWithContentsOfFileEncodingError(path, $.NSUTF8StringEncoding, undefined).js;
+}
+function writeText(path, text) {
+  $(text).writeToFileAtomicallyEncodingError(path, true, $.NSUTF8StringEncoding, undefined);
+}
+function removeItem(path) {
+  if (fileExists(path)) $.NSFileManager.defaultManager.removeItemAtPathError(path, undefined);
+}
+function terminateProcess(processIdentifierText) {
+  const processIdentifier = String(processIdentifierText).trim();
+  if (!/^[1-9]\d*$/.test(processIdentifier)) return;
+  const numericProcessIdentifier = Number(processIdentifier);
+  if (!Number.isSafeInteger(numericProcessIdentifier)) return;
+  const terminateTask = $.NSTask.alloc.init;
+  terminateTask.executableURL = $.NSURL.fileURLWithPath('/bin/kill');
+  terminateTask.arguments = ['-TERM', processIdentifier];
+  terminateTask.launchAndReturnError(false);
+}
+function stopActiveStream(paths) {
+  if (fileExists(paths.process)) terminateProcess(readText(paths.process));
+  removeItem(paths.stream);
+  removeItem(paths.process);
+}
+function readValidCurrentMessages(currentChatPath) {
+  if (!fileExists(currentChatPath)) return [];
+  try {
+    const currentMessages = JSON.parse(readText(currentChatPath));
+    return Array.isArray(currentMessages) ? currentMessages : [];
+  } catch (_error) {
+    return [];
+  }
+}
+function archiveCurrentMessages(paths, currentMessages) {
+  ensureDirectory(paths.archiveDirectory);
+  const safeTimestamp = new Date().toISOString().replace(/[.:]/g, '-');
+  const uniqueIdentifier = $.NSProcessInfo.processInfo.globallyUniqueString.js;
+  writeText(paths.archiveDirectory + '/' + safeTimestamp + '-' + uniqueIdentifier + '.json', JSON.stringify(currentMessages));
+}
+function startNewChat(paths) {
+  stopActiveStream(paths);
+  const currentMessages = readValidCurrentMessages(paths.currentChat);
+  if (currentMessages.length > 0) archiveCurrentMessages(paths, currentMessages);
+  writeText(paths.currentChat, '[]');
+  return 'Started a new chat';
+}
+function clearAllHistory(paths) {
+  stopActiveStream(paths);
+  removeItem(paths.archiveDirectory);
+  writeText(paths.currentChat, '[]');
+  return 'Cleared all chat history';
+}
+function executeChatAction(actionName) {
+  return run([actionName]);
+}
+function run(argv) {
+  const actionName = argv[0] || '';
+  const dataDirectory = environmentValue('alfred_workflow_data');
+  const cacheDirectory = environmentValue('alfred_workflow_cache');
+  const paths = {
+    currentChat: dataDirectory + '/chat.json',
+    archiveDirectory: dataDirectory + '/chat/archive',
+    stream: cacheDirectory + '/chat-stream.txt',
+    process: cacheDirectory + '/chat-stream.pid',
+  };
+  if (actionName === 'new') return startNewChat(paths);
+  if (actionName === 'clear-all') return clearAllHistory(paths);
+  throw new Error('Unsupported chat action: ' + actionName);
+}

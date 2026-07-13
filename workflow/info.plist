@@ -6,6 +6,45 @@
 	<string>com.xiaopeng.fxp.alfredtranslation</string>
 	<key>connections</key>
 	<dict>
+		<key>CHAT_ACTION_CLEAR_ALL</key>
+		<array>
+			<dict>
+				<key>destinationuid</key>
+				<string>CHAT_CLEAR_NOTIFICATION</string>
+				<key>modifiers</key>
+				<integer>0</integer>
+				<key>modifiersubtext</key>
+				<string></string>
+				<key>vitoclose</key>
+				<true/>
+			</dict>
+		</array>
+		<key>CHAT_ACTION_NEW</key>
+		<array>
+			<dict>
+				<key>destinationuid</key>
+				<string>CHAT_NEW_NOTIFICATION</string>
+				<key>modifiers</key>
+				<integer>0</integer>
+				<key>modifiersubtext</key>
+				<string></string>
+				<key>vitoclose</key>
+				<true/>
+			</dict>
+		</array>
+		<key>CHAT_CLEAR_FILTER</key>
+		<array>
+			<dict>
+				<key>destinationuid</key>
+				<string>CHAT_ACTION_CLEAR_ALL</string>
+				<key>modifiers</key>
+				<integer>0</integer>
+				<key>modifiersubtext</key>
+				<string></string>
+				<key>vitoclose</key>
+				<true/>
+			</dict>
+		</array>
 		<key>CHAT_KEYWORD_INPUT</key>
 		<array>
 			<dict>
@@ -15,6 +54,19 @@
 				<integer>0</integer>
 				<key>vitoclose</key>
 				<false/>
+			</dict>
+		</array>
+		<key>CHAT_TEXT_VIEW</key>
+		<array>
+			<dict>
+				<key>destinationuid</key>
+				<string>CHAT_ACTION_NEW</string>
+				<key>modifiers</key>
+				<integer>1048576</integer>
+				<key>modifiersubtext</key>
+				<string>Start a new chat</string>
+				<key>vitoclose</key>
+				<true/>
 			</dict>
 		</array>
 		<key>TRANSLATION_KIND_CONDITION</key>
@@ -130,6 +182,263 @@
 			<string>alfred.workflow.userinterface.text</string>
 			<key>uid</key>
 			<string>CHAT_TEXT_VIEW</string>
+			<key>version</key>
+			<integer>1</integer>
+		</dict>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>argumenttype</key>
+				<integer>2</integer>
+				<key>keyword</key>
+				<string>ai-clear</string>
+				<key>script</key>
+				<string>function run() { return JSON.stringify({ items: [{ title: 'Confirm clearing all chat history', subtitle: 'This cannot be undone', arg: 'clear-all', valid: true }] }); }</string>
+				<key>scriptargtype</key>
+				<integer>1</integer>
+				<key>scriptfile</key>
+				<string></string>
+				<key>subtext</key>
+				<string>Press Return to review the destructive action</string>
+				<key>title</key>
+				<string>Clear Ask AI History</string>
+				<key>type</key>
+				<integer>7</integer>
+			</dict>
+			<key>type</key>
+			<string>alfred.workflow.input.scriptfilter</string>
+			<key>uid</key>
+			<string>CHAT_CLEAR_FILTER</string>
+			<key>version</key>
+			<integer>3</integer>
+		</dict>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>script</key>
+				<string>
+function environmentValue(variableName) {
+  const value = $.NSProcessInfo.processInfo.environment.objectForKey(variableName);
+  return value ? value.js : '';
+}
+function fileExists(path) {
+  return $.NSFileManager.defaultManager.fileExistsAtPath(path);
+}
+function ensureDirectory(path) {
+  $.NSFileManager.defaultManager.createDirectoryAtPathWithIntermediateDirectoriesAttributesError(path, true, undefined, undefined);
+}
+function readText(path) {
+  return $.NSString.stringWithContentsOfFileEncodingError(path, $.NSUTF8StringEncoding, undefined).js;
+}
+function writeText(path, text) {
+  $(text).writeToFileAtomicallyEncodingError(path, true, $.NSUTF8StringEncoding, undefined);
+}
+function removeItem(path) {
+  if (fileExists(path)) $.NSFileManager.defaultManager.removeItemAtPathError(path, undefined);
+}
+function terminateProcess(processIdentifierText) {
+  const processIdentifier = String(processIdentifierText).trim();
+  if (!/^[1-9]\d*$/.test(processIdentifier)) return;
+  const numericProcessIdentifier = Number(processIdentifier);
+  if (!Number.isSafeInteger(numericProcessIdentifier)) return;
+  const terminateTask = $.NSTask.alloc.init;
+  terminateTask.executableURL = $.NSURL.fileURLWithPath('/bin/kill');
+  terminateTask.arguments = ['-TERM', processIdentifier];
+  terminateTask.launchAndReturnError(false);
+}
+function stopActiveStream(paths) {
+  if (fileExists(paths.process)) terminateProcess(readText(paths.process));
+  removeItem(paths.stream);
+  removeItem(paths.process);
+}
+function readValidCurrentMessages(currentChatPath) {
+  if (!fileExists(currentChatPath)) return [];
+  try {
+    const currentMessages = JSON.parse(readText(currentChatPath));
+    return Array.isArray(currentMessages) ? currentMessages : [];
+  } catch (_error) {
+    return [];
+  }
+}
+function archiveCurrentMessages(paths, currentMessages) {
+  ensureDirectory(paths.archiveDirectory);
+  const safeTimestamp = new Date().toISOString().replace(/[.:]/g, '-');
+  const uniqueIdentifier = $.NSProcessInfo.processInfo.globallyUniqueString.js;
+  writeText(paths.archiveDirectory + '/' + safeTimestamp + '-' + uniqueIdentifier + '.json', JSON.stringify(currentMessages));
+}
+function startNewChat(paths) {
+  stopActiveStream(paths);
+  const currentMessages = readValidCurrentMessages(paths.currentChat);
+  if (currentMessages.length &gt; 0) archiveCurrentMessages(paths, currentMessages);
+  writeText(paths.currentChat, '[]');
+  return 'Started a new chat';
+}
+function clearAllHistory(paths) {
+  stopActiveStream(paths);
+  removeItem(paths.archiveDirectory);
+  writeText(paths.currentChat, '[]');
+  return 'Cleared all chat history';
+}
+function executeChatAction(actionName) {
+  return run([actionName]);
+}
+function run(argv) {
+  const actionName = argv[0] || '';
+  const dataDirectory = environmentValue('alfred_workflow_data');
+  const cacheDirectory = environmentValue('alfred_workflow_cache');
+  const paths = {
+    currentChat: dataDirectory + '/chat.json',
+    archiveDirectory: dataDirectory + '/chat/archive',
+    stream: cacheDirectory + '/chat-stream.txt',
+    process: cacheDirectory + '/chat-stream.pid',
+  };
+  if (actionName === 'new') return startNewChat(paths);
+  if (actionName === 'clear-all') return clearAllHistory(paths);
+  throw new Error('Unsupported chat action: ' + actionName);
+}
+
+executeChatAction('new');</string>
+				<key>scriptfile</key>
+				<string></string>
+				<key>type</key>
+				<integer>7</integer>
+			</dict>
+			<key>type</key>
+			<string>alfred.workflow.action.script</string>
+			<key>uid</key>
+			<string>CHAT_ACTION_NEW</string>
+			<key>version</key>
+			<integer>2</integer>
+		</dict>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>script</key>
+				<string>
+function environmentValue(variableName) {
+  const value = $.NSProcessInfo.processInfo.environment.objectForKey(variableName);
+  return value ? value.js : '';
+}
+function fileExists(path) {
+  return $.NSFileManager.defaultManager.fileExistsAtPath(path);
+}
+function ensureDirectory(path) {
+  $.NSFileManager.defaultManager.createDirectoryAtPathWithIntermediateDirectoriesAttributesError(path, true, undefined, undefined);
+}
+function readText(path) {
+  return $.NSString.stringWithContentsOfFileEncodingError(path, $.NSUTF8StringEncoding, undefined).js;
+}
+function writeText(path, text) {
+  $(text).writeToFileAtomicallyEncodingError(path, true, $.NSUTF8StringEncoding, undefined);
+}
+function removeItem(path) {
+  if (fileExists(path)) $.NSFileManager.defaultManager.removeItemAtPathError(path, undefined);
+}
+function terminateProcess(processIdentifierText) {
+  const processIdentifier = String(processIdentifierText).trim();
+  if (!/^[1-9]\d*$/.test(processIdentifier)) return;
+  const numericProcessIdentifier = Number(processIdentifier);
+  if (!Number.isSafeInteger(numericProcessIdentifier)) return;
+  const terminateTask = $.NSTask.alloc.init;
+  terminateTask.executableURL = $.NSURL.fileURLWithPath('/bin/kill');
+  terminateTask.arguments = ['-TERM', processIdentifier];
+  terminateTask.launchAndReturnError(false);
+}
+function stopActiveStream(paths) {
+  if (fileExists(paths.process)) terminateProcess(readText(paths.process));
+  removeItem(paths.stream);
+  removeItem(paths.process);
+}
+function readValidCurrentMessages(currentChatPath) {
+  if (!fileExists(currentChatPath)) return [];
+  try {
+    const currentMessages = JSON.parse(readText(currentChatPath));
+    return Array.isArray(currentMessages) ? currentMessages : [];
+  } catch (_error) {
+    return [];
+  }
+}
+function archiveCurrentMessages(paths, currentMessages) {
+  ensureDirectory(paths.archiveDirectory);
+  const safeTimestamp = new Date().toISOString().replace(/[.:]/g, '-');
+  const uniqueIdentifier = $.NSProcessInfo.processInfo.globallyUniqueString.js;
+  writeText(paths.archiveDirectory + '/' + safeTimestamp + '-' + uniqueIdentifier + '.json', JSON.stringify(currentMessages));
+}
+function startNewChat(paths) {
+  stopActiveStream(paths);
+  const currentMessages = readValidCurrentMessages(paths.currentChat);
+  if (currentMessages.length &gt; 0) archiveCurrentMessages(paths, currentMessages);
+  writeText(paths.currentChat, '[]');
+  return 'Started a new chat';
+}
+function clearAllHistory(paths) {
+  stopActiveStream(paths);
+  removeItem(paths.archiveDirectory);
+  writeText(paths.currentChat, '[]');
+  return 'Cleared all chat history';
+}
+function executeChatAction(actionName) {
+  return run([actionName]);
+}
+function run(argv) {
+  const actionName = argv[0] || '';
+  const dataDirectory = environmentValue('alfred_workflow_data');
+  const cacheDirectory = environmentValue('alfred_workflow_cache');
+  const paths = {
+    currentChat: dataDirectory + '/chat.json',
+    archiveDirectory: dataDirectory + '/chat/archive',
+    stream: cacheDirectory + '/chat-stream.txt',
+    process: cacheDirectory + '/chat-stream.pid',
+  };
+  if (actionName === 'new') return startNewChat(paths);
+  if (actionName === 'clear-all') return clearAllHistory(paths);
+  throw new Error('Unsupported chat action: ' + actionName);
+}
+
+executeChatAction('clear-all');</string>
+				<key>scriptfile</key>
+				<string></string>
+				<key>type</key>
+				<integer>7</integer>
+			</dict>
+			<key>type</key>
+			<string>alfred.workflow.action.script</string>
+			<key>uid</key>
+			<string>CHAT_ACTION_CLEAR_ALL</string>
+			<key>version</key>
+			<integer>2</integer>
+		</dict>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>onlyshowifquerypopulated</key>
+				<false/>
+				<key>text</key>
+				<string>Started a new chat</string>
+				<key>title</key>
+				<string>Ask AI</string>
+			</dict>
+			<key>type</key>
+			<string>alfred.workflow.output.notification</string>
+			<key>uid</key>
+			<string>CHAT_NEW_NOTIFICATION</string>
+			<key>version</key>
+			<integer>1</integer>
+		</dict>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>onlyshowifquerypopulated</key>
+				<false/>
+				<key>text</key>
+				<string>Cleared all chat history</string>
+				<key>title</key>
+				<string>Ask AI</string>
+			</dict>
+			<key>type</key>
+			<string>alfred.workflow.output.notification</string>
+			<key>uid</key>
+			<string>CHAT_CLEAR_NOTIFICATION</string>
 			<key>version</key>
 			<integer>1</integer>
 		</dict>

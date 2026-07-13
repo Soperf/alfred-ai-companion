@@ -225,6 +225,88 @@ function run(argv) {
 }
 `;
 const translationInlineScript = translationScript.slice(scriptHeader.length);
+const chatActionsScript = `${scriptHeader}
+function environmentValue(variableName) {
+  const value = $.NSProcessInfo.processInfo.environment.objectForKey(variableName);
+  return value ? value.js : '';
+}
+function fileExists(path) {
+  return $.NSFileManager.defaultManager.fileExistsAtPath(path);
+}
+function ensureDirectory(path) {
+  $.NSFileManager.defaultManager.createDirectoryAtPathWithIntermediateDirectoriesAttributesError(path, true, undefined, undefined);
+}
+function readText(path) {
+  return $.NSString.stringWithContentsOfFileEncodingError(path, $.NSUTF8StringEncoding, undefined).js;
+}
+function writeText(path, text) {
+  $(text).writeToFileAtomicallyEncodingError(path, true, $.NSUTF8StringEncoding, undefined);
+}
+function removeItem(path) {
+  if (fileExists(path)) $.NSFileManager.defaultManager.removeItemAtPathError(path, undefined);
+}
+function terminateProcess(processIdentifierText) {
+  const processIdentifier = String(processIdentifierText).trim();
+  if (!/^[1-9]\\d*$/.test(processIdentifier)) return;
+  const numericProcessIdentifier = Number(processIdentifier);
+  if (!Number.isSafeInteger(numericProcessIdentifier)) return;
+  const terminateTask = $.NSTask.alloc.init;
+  terminateTask.executableURL = $.NSURL.fileURLWithPath('/bin/kill');
+  terminateTask.arguments = ['-TERM', processIdentifier];
+  terminateTask.launchAndReturnError(false);
+}
+function stopActiveStream(paths) {
+  if (fileExists(paths.process)) terminateProcess(readText(paths.process));
+  removeItem(paths.stream);
+  removeItem(paths.process);
+}
+function readValidCurrentMessages(currentChatPath) {
+  if (!fileExists(currentChatPath)) return [];
+  try {
+    const currentMessages = JSON.parse(readText(currentChatPath));
+    return Array.isArray(currentMessages) ? currentMessages : [];
+  } catch (_error) {
+    return [];
+  }
+}
+function archiveCurrentMessages(paths, currentMessages) {
+  ensureDirectory(paths.archiveDirectory);
+  const safeTimestamp = new Date().toISOString().replace(/[.:]/g, '-');
+  const uniqueIdentifier = $.NSProcessInfo.processInfo.globallyUniqueString.js;
+  writeText(paths.archiveDirectory + '/' + safeTimestamp + '-' + uniqueIdentifier + '.json', JSON.stringify(currentMessages));
+}
+function startNewChat(paths) {
+  stopActiveStream(paths);
+  const currentMessages = readValidCurrentMessages(paths.currentChat);
+  if (currentMessages.length > 0) archiveCurrentMessages(paths, currentMessages);
+  writeText(paths.currentChat, '[]');
+  return 'Started a new chat';
+}
+function clearAllHistory(paths) {
+  stopActiveStream(paths);
+  removeItem(paths.archiveDirectory);
+  writeText(paths.currentChat, '[]');
+  return 'Cleared all chat history';
+}
+function executeChatAction(actionName) {
+  return run([actionName]);
+}
+function run(argv) {
+  const actionName = argv[0] || '';
+  const dataDirectory = environmentValue('alfred_workflow_data');
+  const cacheDirectory = environmentValue('alfred_workflow_cache');
+  const paths = {
+    currentChat: dataDirectory + '/chat.json',
+    archiveDirectory: dataDirectory + '/chat/archive',
+    stream: cacheDirectory + '/chat-stream.txt',
+    process: cacheDirectory + '/chat-stream.pid',
+  };
+  if (actionName === 'new') return startNewChat(paths);
+  if (actionName === 'clear-all') return clearAllHistory(paths);
+  throw new Error('Unsupported chat action: ' + actionName);
+}
+`;
+const chatActionsInlineScript = chatActionsScript.slice(scriptHeader.length);
 const translationViewScript = `${scriptHeader}
 function environmentValue(variableName) {
   const value = $.NSProcessInfo.processInfo.environment.objectForKey(variableName);
@@ -246,7 +328,7 @@ function run() {
 }
 `;
 
-for (const [scriptName, scriptContent] of Object.entries({ chat: chatScript, translate: translationScript, 'translate-view': translationViewScript })) {
+for (const [scriptName, scriptContent] of Object.entries({ chat: chatScript, 'chat-actions': chatActionsScript, translate: translationScript, 'translate-view': translationViewScript })) {
   const scriptPath = join(workflowDirectory, scriptName);
   writeFileSync(scriptPath, scriptContent, 'utf8');
   chmodSync(scriptPath, 0o755);
@@ -267,6 +349,11 @@ const plist = {
   objects: [
     keywordObject('CHAT_KEYWORD_INPUT', 'CHAT_KEYWORD', 'Ask AI', 'Chat with the configured model'),
     { uid: 'CHAT_TEXT_VIEW', type: 'alfred.workflow.userinterface.text', version: 1, config: { inputfile: 'chat', inputtype: 1, scriptinput: 2, outputmode: 1, behaviour: 2, footertext: '↩ Ask a question', loadingtext: 'Contacting compatible API…', fontmode: 0, fontsizing: 0, spellchecking: 0, stackview: false } },
+    { uid: 'CHAT_CLEAR_FILTER', type: 'alfred.workflow.input.scriptfilter', version: 3, config: { keyword: 'ai-clear', title: 'Clear Ask AI History', subtext: 'Press Return to review the destructive action', argumenttype: 2, scriptargtype: 1, type: 7, scriptfile: '', script: "function run() { return JSON.stringify({ items: [{ title: 'Confirm clearing all chat history', subtitle: 'This cannot be undone', arg: 'clear-all', valid: true }] }); }" } },
+    { uid: 'CHAT_ACTION_NEW', type: 'alfred.workflow.action.script', version: 2, config: { type: 7, scriptfile: '', script: `${chatActionsInlineScript}\nexecuteChatAction('new');` } },
+    { uid: 'CHAT_ACTION_CLEAR_ALL', type: 'alfred.workflow.action.script', version: 2, config: { type: 7, scriptfile: '', script: `${chatActionsInlineScript}\nexecuteChatAction('clear-all');` } },
+    { uid: 'CHAT_NEW_NOTIFICATION', type: 'alfred.workflow.output.notification', version: 1, config: { title: 'Ask AI', text: 'Started a new chat', onlyshowifquerypopulated: false } },
+    { uid: 'CHAT_CLEAR_NOTIFICATION', type: 'alfred.workflow.output.notification', version: 1, config: { title: 'Ask AI', text: 'Cleared all chat history', onlyshowifquerypopulated: false } },
     { uid: 'TRANSLATION_SCRIPT_FILTER', type: 'alfred.workflow.input.scriptfilter', version: 3, config: { keyword: '{var:TRANSLATION_KEYWORD}', scriptfile: '', script: translationInlineScript, type: 7, scriptargtype: 1, argumenttype: 0, withspace: true, queuemode: 1, queuedelaymode: 0, queuedelaycustom: 0.35, queuedelayimmediatelyinitially: true, escaping: 68, title: 'Translation', subtext: 'Translate using the configured model', alfredfiltersresults: false, alfredfiltersresultsmatchmode: 0, argumenttrimmode: 0, argumenttreatemptyqueryasnil: true, skipuniversalaction: true } },
     { uid: 'TRANSLATION_KIND_CONDITION', type: 'alfred.workflow.utility.conditional', version: 1, config: { hideelse: false, conditions: [{ inputstring: '{var:translation_kind}', matchstring: 'long', matchcasesensitive: false, matchmode: 0, outputlabel: 'Long translation', uid: 'TRANSLATION_KIND_LONG' }], elselabel: 'Short translation' } },
     { uid: 'TRANSLATION_TEXT_VIEW', type: 'alfred.workflow.userinterface.text', version: 1, config: { inputfile: 'translate-view', inputtype: 1, scriptinput: 2, outputmode: 0, behaviour: 2, footertext: '↩ Copy translation', loadingtext: 'Loading full translation…', fontmode: 0, fontsizing: 0, spellchecking: 0, stackview: false } },
@@ -274,6 +361,10 @@ const plist = {
   ],
   connections: {
     CHAT_KEYWORD_INPUT: [{ destinationuid: 'CHAT_TEXT_VIEW', modifiers: 0, vitoclose: false }],
+    CHAT_TEXT_VIEW: [{ destinationuid: 'CHAT_ACTION_NEW', modifiers: 1048576, modifiersubtext: 'Start a new chat', vitoclose: true }],
+    CHAT_CLEAR_FILTER: [{ destinationuid: 'CHAT_ACTION_CLEAR_ALL', modifiers: 0, modifiersubtext: '', vitoclose: true }],
+    CHAT_ACTION_NEW: [{ destinationuid: 'CHAT_NEW_NOTIFICATION', modifiers: 0, modifiersubtext: '', vitoclose: true }],
+    CHAT_ACTION_CLEAR_ALL: [{ destinationuid: 'CHAT_CLEAR_NOTIFICATION', modifiers: 0, modifiersubtext: '', vitoclose: true }],
     TRANSLATION_SCRIPT_FILTER: [{ destinationuid: 'TRANSLATION_KIND_CONDITION', modifiers: 0, modifiersubtext: '', vitoclose: false }],
     TRANSLATION_KIND_CONDITION: [
       { destinationuid: 'TRANSLATION_TEXT_VIEW', sourceoutputuid: 'TRANSLATION_KIND_LONG', modifiers: 0, modifiersubtext: '', vitoclose: false },
