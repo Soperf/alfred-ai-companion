@@ -1,0 +1,524 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>bundleid</key>
+	<string>com.xiaopeng.fxp.alfredtranslation</string>
+	<key>connections</key>
+	<dict>
+		<key>CHAT_KEYWORD_INPUT</key>
+		<array>
+			<dict>
+				<key>destinationuid</key>
+				<string>CHAT_TEXT_VIEW</string>
+				<key>modifiers</key>
+				<integer>0</integer>
+				<key>vitoclose</key>
+				<false/>
+			</dict>
+		</array>
+		<key>TRANSLATION_KIND_CONDITION</key>
+		<array>
+			<dict>
+				<key>destinationuid</key>
+				<string>TRANSLATION_TEXT_VIEW</string>
+				<key>modifiers</key>
+				<integer>0</integer>
+				<key>modifiersubtext</key>
+				<string></string>
+				<key>sourceoutputuid</key>
+				<string>TRANSLATION_KIND_LONG</string>
+				<key>vitoclose</key>
+				<false/>
+			</dict>
+			<dict>
+				<key>destinationuid</key>
+				<string>TRANSLATION_COPY_TO_CLIPBOARD</string>
+				<key>modifiers</key>
+				<integer>0</integer>
+				<key>modifiersubtext</key>
+				<string></string>
+				<key>vitoclose</key>
+				<false/>
+			</dict>
+		</array>
+		<key>TRANSLATION_SCRIPT_FILTER</key>
+		<array>
+			<dict>
+				<key>destinationuid</key>
+				<string>TRANSLATION_KIND_CONDITION</string>
+				<key>modifiers</key>
+				<integer>0</integer>
+				<key>modifiersubtext</key>
+				<string></string>
+				<key>vitoclose</key>
+				<false/>
+			</dict>
+		</array>
+		<key>TRANSLATION_TEXT_VIEW</key>
+		<array>
+			<dict>
+				<key>destinationuid</key>
+				<string>TRANSLATION_COPY_TO_CLIPBOARD</string>
+				<key>modifiers</key>
+				<integer>0</integer>
+				<key>modifiersubtext</key>
+				<string></string>
+				<key>vitoclose</key>
+				<false/>
+			</dict>
+		</array>
+	</dict>
+	<key>createdby</key>
+	<string>xiaopeng.fxp</string>
+	<key>description</key>
+	<string>OpenAI-compatible chat and translation</string>
+	<key>name</key>
+	<string>AI Translation</string>
+	<key>objects</key>
+	<array>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>argumenttype</key>
+				<integer>1</integer>
+				<key>keyword</key>
+				<string>{var:CHAT_KEYWORD}</string>
+				<key>skipuniversalaction</key>
+				<true/>
+				<key>subtext</key>
+				<string>Chat with the configured model</string>
+				<key>text</key>
+				<string>Ask AI</string>
+				<key>withspace</key>
+				<true/>
+			</dict>
+			<key>type</key>
+			<string>alfred.workflow.input.keyword</string>
+			<key>uid</key>
+			<string>CHAT_KEYWORD_INPUT</string>
+			<key>version</key>
+			<integer>1</integer>
+		</dict>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>behaviour</key>
+				<integer>2</integer>
+				<key>fontmode</key>
+				<integer>0</integer>
+				<key>fontsizing</key>
+				<integer>0</integer>
+				<key>footertext</key>
+				<string>↩ Ask a question</string>
+				<key>inputfile</key>
+				<string>chat</string>
+				<key>inputtype</key>
+				<integer>1</integer>
+				<key>loadingtext</key>
+				<string>Contacting compatible API…</string>
+				<key>outputmode</key>
+				<integer>1</integer>
+				<key>scriptinput</key>
+				<integer>2</integer>
+				<key>spellchecking</key>
+				<integer>0</integer>
+				<key>stackview</key>
+				<false/>
+			</dict>
+			<key>type</key>
+			<string>alfred.workflow.userinterface.text</string>
+			<key>uid</key>
+			<string>CHAT_TEXT_VIEW</string>
+			<key>version</key>
+			<integer>1</integer>
+		</dict>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>alfredfiltersresults</key>
+				<false/>
+				<key>alfredfiltersresultsmatchmode</key>
+				<integer>0</integer>
+				<key>argumenttreatemptyqueryasnil</key>
+				<true/>
+				<key>argumenttrimmode</key>
+				<integer>0</integer>
+				<key>argumenttype</key>
+				<integer>0</integer>
+				<key>escaping</key>
+				<integer>68</integer>
+				<key>keyword</key>
+				<string>{var:TRANSLATION_KEYWORD}</string>
+				<key>queuedelaycustom</key>
+				<real>0.34999999999999998</real>
+				<key>queuedelayimmediatelyinitially</key>
+				<true/>
+				<key>queuedelaymode</key>
+				<integer>0</integer>
+				<key>queuemode</key>
+				<integer>1</integer>
+				<key>script</key>
+				<string>
+function environmentValue(variableName) {
+  const value = $.NSProcessInfo.processInfo.environment.objectForKey(variableName);
+  return value ? value.js : '';
+}
+function configurationError(message) {
+  return JSON.stringify({ items: [{ title: 'Configuration error', subtitle: message, valid: false }] });
+}
+function normalizeEndpoint(baseUrl) {
+  const normalizedBaseUrl = (baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
+  if (/\/chat\/completions$/.test(normalizedBaseUrl)) return normalizedBaseUrl;
+  const schemeBoundary = normalizedBaseUrl.indexOf('://') + 3;
+  const pathBoundary = normalizedBaseUrl.indexOf('/', schemeBoundary);
+  return pathBoundary &lt; 0 ? normalizedBaseUrl + '/v1/chat/completions' : normalizedBaseUrl + '/chat/completions';
+}
+function classifyTranslation(translatedText) {
+  const normalizedText = translatedText.trim();
+  const lineCount = normalizedText ? normalizedText.split('\n').length : 0;
+  const kind = normalizedText.length &lt;= 240 &amp;&amp; lineCount &lt;= 3 ? 'short' : 'long';
+  return { kind: kind, text: normalizedText, preview: kind === 'short' ? normalizedText : normalizedText.slice(0, 237) + '…' };
+}
+function writeTranslationCache(translatedText) {
+  const cacheDirectory = environmentValue('alfred_workflow_cache');
+  if (!cacheDirectory) return;
+  $.NSFileManager.defaultManager.createDirectoryAtPathWithIntermediateDirectoriesAttributesError(cacheDirectory, true, undefined, undefined);
+  $(JSON.stringify({ translatedText: translatedText })).writeToFileAtomicallyEncodingError(cacheDirectory + '/translation-cache.json', true, $.NSUTF8StringEncoding, undefined);
+}
+function run(argv) {
+  const sourceText = argv[0] || '';
+  if (!sourceText.trim()) return JSON.stringify({ items: [{ title: 'Translation input required', subtitle: 'Enter text after tr', valid: false }] });
+  const model = environmentValue('TRANSLATION_MODEL');
+  if (!model) return configurationError('Missing TRANSLATION_MODEL');
+  const endpoint = normalizeEndpoint(environmentValue('OPENAI_BASE_URL'));
+  const targetLanguage = /[\u3400-\u9fff]/.test(sourceText)
+    ? (environmentValue('CHINESE_TARGET_LANGUAGE') || 'English')
+    : (environmentValue('OTHER_TARGET_LANGUAGE') || 'Simplified Chinese');
+  const task = $.NSTask.alloc.init;
+  const outputPipe = $.NSPipe.pipe;
+  const headers = ['Content-Type: application/json'];
+  const apiKey = environmentValue('OPENAI_API_KEY');
+  if (apiKey) headers.push('Authorization: Bearer ' + apiKey);
+  const argumentsForCurl = [endpoint, '--silent', '--show-error', '--header', headers[0]];
+  if (headers[1]) argumentsForCurl.push('--header', headers[1]);
+  argumentsForCurl.push('--data', JSON.stringify({ model: model, messages: [{ role: 'system', content: 'Translate the user content into ' + targetLanguage + '. Return only the translation. Preserve paragraphs, code, URLs, and placeholders.' }, { role: 'user', content: sourceText }], stream: false }));
+  task.executableURL = $.NSURL.fileURLWithPath('/usr/bin/curl');
+  task.arguments = argumentsForCurl;
+  task.standardOutput = outputPipe;
+  task.launchAndReturnError(false);
+  const responseData = outputPipe.fileHandleForReading.readDataToEndOfFileAndReturnError(false);
+  const response = $.NSString.alloc.initWithDataEncoding(responseData, $.NSUTF8StringEncoding).js;
+  try {
+    const parsed = JSON.parse(response);
+    const translatedText = parsed.choices &amp;&amp; parsed.choices[0] &amp;&amp; parsed.choices[0].message &amp;&amp; parsed.choices[0].message.content;
+    if (!translatedText) throw new Error(parsed.error &amp;&amp; parsed.error.message || 'Compatible API returned no message content');
+    const translationResult = classifyTranslation(translatedText);
+    writeTranslationCache(translationResult.text);
+    return JSON.stringify({ items: [{ title: translationResult.preview, subtitle: translationResult.kind === 'long' ? 'Press Return to view full translation · ' + model : 'Translation to ' + targetLanguage + ' · ' + model, arg: translationResult.text, valid: true, variables: { translation_kind: translationResult.kind } }] });
+  } catch (error) {
+    return JSON.stringify({ items: [{ title: 'Translation error', subtitle: error.message || response.slice(0, 300), valid: false }] });
+  }
+}
+</string>
+				<key>scriptargtype</key>
+				<integer>1</integer>
+				<key>scriptfile</key>
+				<string></string>
+				<key>skipuniversalaction</key>
+				<true/>
+				<key>subtext</key>
+				<string>Translate using the configured model</string>
+				<key>title</key>
+				<string>Translation</string>
+				<key>type</key>
+				<integer>7</integer>
+				<key>withspace</key>
+				<true/>
+			</dict>
+			<key>type</key>
+			<string>alfred.workflow.input.scriptfilter</string>
+			<key>uid</key>
+			<string>TRANSLATION_SCRIPT_FILTER</string>
+			<key>version</key>
+			<integer>3</integer>
+		</dict>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>conditions</key>
+				<array>
+					<dict>
+						<key>inputstring</key>
+						<string>{var:translation_kind}</string>
+						<key>matchcasesensitive</key>
+						<false/>
+						<key>matchmode</key>
+						<integer>0</integer>
+						<key>matchstring</key>
+						<string>long</string>
+						<key>outputlabel</key>
+						<string>Long translation</string>
+						<key>uid</key>
+						<string>TRANSLATION_KIND_LONG</string>
+					</dict>
+				</array>
+				<key>elselabel</key>
+				<string>Short translation</string>
+				<key>hideelse</key>
+				<false/>
+			</dict>
+			<key>type</key>
+			<string>alfred.workflow.utility.conditional</string>
+			<key>uid</key>
+			<string>TRANSLATION_KIND_CONDITION</string>
+			<key>version</key>
+			<integer>1</integer>
+		</dict>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>behaviour</key>
+				<integer>2</integer>
+				<key>fontmode</key>
+				<integer>0</integer>
+				<key>fontsizing</key>
+				<integer>0</integer>
+				<key>footertext</key>
+				<string>↩ Copy translation</string>
+				<key>inputfile</key>
+				<string>translate-view</string>
+				<key>inputtype</key>
+				<integer>1</integer>
+				<key>loadingtext</key>
+				<string>Loading full translation…</string>
+				<key>outputmode</key>
+				<integer>0</integer>
+				<key>scriptinput</key>
+				<integer>2</integer>
+				<key>spellchecking</key>
+				<integer>0</integer>
+				<key>stackview</key>
+				<false/>
+			</dict>
+			<key>type</key>
+			<string>alfred.workflow.userinterface.text</string>
+			<key>uid</key>
+			<string>TRANSLATION_TEXT_VIEW</string>
+			<key>version</key>
+			<integer>1</integer>
+		</dict>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>autopaste</key>
+				<false/>
+				<key>clipboardtext</key>
+				<string>{query}</string>
+				<key>ignoredynamicplaceholders</key>
+				<false/>
+				<key>transient</key>
+				<false/>
+			</dict>
+			<key>type</key>
+			<string>alfred.workflow.output.clipboard</string>
+			<key>uid</key>
+			<string>TRANSLATION_COPY_TO_CLIPBOARD</string>
+			<key>version</key>
+			<integer>3</integer>
+		</dict>
+	</array>
+	<key>userconfigurationconfig</key>
+	<array>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<string>https://api.openai.com/v1</string>
+				<key>required</key>
+				<true/>
+				<key>trim</key>
+				<true/>
+			</dict>
+			<key>label</key>
+			<string>OpenAI-compatible Base URL</string>
+			<key>type</key>
+			<string>textfield</string>
+			<key>variable</key>
+			<string>OPENAI_BASE_URL</string>
+		</dict>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<string></string>
+				<key>required</key>
+				<false/>
+				<key>trim</key>
+				<true/>
+			</dict>
+			<key>label</key>
+			<string>API Key</string>
+			<key>type</key>
+			<string>textfield</string>
+			<key>variable</key>
+			<string>OPENAI_API_KEY</string>
+		</dict>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<string></string>
+				<key>required</key>
+				<true/>
+				<key>trim</key>
+				<true/>
+			</dict>
+			<key>label</key>
+			<string>Chat model</string>
+			<key>type</key>
+			<string>textfield</string>
+			<key>variable</key>
+			<string>CHAT_MODEL</string>
+		</dict>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<string></string>
+				<key>required</key>
+				<true/>
+				<key>trim</key>
+				<true/>
+			</dict>
+			<key>label</key>
+			<string>Translation model</string>
+			<key>type</key>
+			<string>textfield</string>
+			<key>variable</key>
+			<string>TRANSLATION_MODEL</string>
+		</dict>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<string></string>
+				<key>required</key>
+				<false/>
+				<key>trim</key>
+				<true/>
+			</dict>
+			<key>label</key>
+			<string>Chat system prompt</string>
+			<key>type</key>
+			<string>textarea</string>
+			<key>variable</key>
+			<string>CHAT_SYSTEM_PROMPT</string>
+		</dict>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<string>20</string>
+				<key>required</key>
+				<true/>
+				<key>trim</key>
+				<true/>
+			</dict>
+			<key>label</key>
+			<string>Maximum chat context messages</string>
+			<key>type</key>
+			<string>textfield</string>
+			<key>variable</key>
+			<string>MAX_CONTEXT_MESSAGES</string>
+		</dict>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<string>English</string>
+				<key>required</key>
+				<true/>
+				<key>trim</key>
+				<true/>
+			</dict>
+			<key>label</key>
+			<string>Translation target for Chinese input</string>
+			<key>type</key>
+			<string>textfield</string>
+			<key>variable</key>
+			<string>CHINESE_TARGET_LANGUAGE</string>
+		</dict>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<string>Simplified Chinese</string>
+				<key>required</key>
+				<true/>
+				<key>trim</key>
+				<true/>
+			</dict>
+			<key>label</key>
+			<string>Translation target for non-Chinese input</string>
+			<key>type</key>
+			<string>textfield</string>
+			<key>variable</key>
+			<string>OTHER_TARGET_LANGUAGE</string>
+		</dict>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<string>30</string>
+				<key>required</key>
+				<true/>
+				<key>trim</key>
+				<true/>
+			</dict>
+			<key>label</key>
+			<string>Request timeout (seconds)</string>
+			<key>type</key>
+			<string>textfield</string>
+			<key>variable</key>
+			<string>REQUEST_TIMEOUT_SECONDS</string>
+		</dict>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<string>ai</string>
+				<key>required</key>
+				<true/>
+				<key>trim</key>
+				<true/>
+			</dict>
+			<key>label</key>
+			<string>Chat keyword</string>
+			<key>type</key>
+			<string>textfield</string>
+			<key>variable</key>
+			<string>CHAT_KEYWORD</string>
+		</dict>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<string>tr</string>
+				<key>required</key>
+				<true/>
+				<key>trim</key>
+				<true/>
+			</dict>
+			<key>label</key>
+			<string>Translation keyword</string>
+			<key>type</key>
+			<string>textfield</string>
+			<key>variable</key>
+			<string>TRANSLATION_KEYWORD</string>
+		</dict>
+	</array>
+	<key>version</key>
+	<string>0.3.0</string>
+</dict>
+</plist>

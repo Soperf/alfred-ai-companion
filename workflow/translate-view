@@ -1,0 +1,21 @@
+#!/usr/bin/osascript -l JavaScript
+/** Generated Workflow entry. @author xiaopeng.fxp @date 2026-07-13 */
+
+function environmentValue(variableName) {
+  const value = $.NSProcessInfo.processInfo.environment.objectForKey(variableName);
+  return value ? value.js : '';
+}
+function run() {
+  const cacheDirectory = environmentValue('alfred_workflow_cache');
+  const cachePath = cacheDirectory + '/translation-cache.json';
+  if (!cacheDirectory || !$.NSFileManager.defaultManager.fileExistsAtPath(cachePath)) {
+    return JSON.stringify({ response: 'No translation available', behaviour: { scroll: 'end' } });
+  }
+  try {
+    const cacheText = $.NSString.stringWithContentsOfFileEncodingError(cachePath, $.NSUTF8StringEncoding, undefined).js;
+    const cachedTranslation = JSON.parse(cacheText);
+    return JSON.stringify({ response: cachedTranslation.translatedText || 'No translation available', behaviour: { scroll: 'end' } });
+  } catch (error) {
+    return JSON.stringify({ response: 'Translation cache error: ' + (error.message || String(error)), behaviour: { scroll: 'end' } });
+  }
+}

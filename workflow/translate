@@ -1,0 +1,63 @@
+#!/usr/bin/osascript -l JavaScript
+/** Generated Workflow entry. @author xiaopeng.fxp @date 2026-07-13 */
+
+function environmentValue(variableName) {
+  const value = $.NSProcessInfo.processInfo.environment.objectForKey(variableName);
+  return value ? value.js : '';
+}
+function configurationError(message) {
+  return JSON.stringify({ items: [{ title: 'Configuration error', subtitle: message, valid: false }] });
+}
+function normalizeEndpoint(baseUrl) {
+  const normalizedBaseUrl = (baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
+  if (/\/chat\/completions$/.test(normalizedBaseUrl)) return normalizedBaseUrl;
+  const schemeBoundary = normalizedBaseUrl.indexOf('://') + 3;
+  const pathBoundary = normalizedBaseUrl.indexOf('/', schemeBoundary);
+  return pathBoundary < 0 ? normalizedBaseUrl + '/v1/chat/completions' : normalizedBaseUrl + '/chat/completions';
+}
+function classifyTranslation(translatedText) {
+  const normalizedText = translatedText.trim();
+  const lineCount = normalizedText ? normalizedText.split('\n').length : 0;
+  const kind = normalizedText.length <= 240 && lineCount <= 3 ? 'short' : 'long';
+  return { kind: kind, text: normalizedText, preview: kind === 'short' ? normalizedText : normalizedText.slice(0, 237) + '…' };
+}
+function writeTranslationCache(translatedText) {
+  const cacheDirectory = environmentValue('alfred_workflow_cache');
+  if (!cacheDirectory) return;
+  $.NSFileManager.defaultManager.createDirectoryAtPathWithIntermediateDirectoriesAttributesError(cacheDirectory, true, undefined, undefined);
+  $(JSON.stringify({ translatedText: translatedText })).writeToFileAtomicallyEncodingError(cacheDirectory + '/translation-cache.json', true, $.NSUTF8StringEncoding, undefined);
+}
+function run(argv) {
+  const sourceText = argv[0] || '';
+  if (!sourceText.trim()) return JSON.stringify({ items: [{ title: 'Translation input required', subtitle: 'Enter text after tr', valid: false }] });
+  const model = environmentValue('TRANSLATION_MODEL');
+  if (!model) return configurationError('Missing TRANSLATION_MODEL');
+  const endpoint = normalizeEndpoint(environmentValue('OPENAI_BASE_URL'));
+  const targetLanguage = /[\u3400-\u9fff]/.test(sourceText)
+    ? (environmentValue('CHINESE_TARGET_LANGUAGE') || 'English')
+    : (environmentValue('OTHER_TARGET_LANGUAGE') || 'Simplified Chinese');
+  const task = $.NSTask.alloc.init;
+  const outputPipe = $.NSPipe.pipe;
+  const headers = ['Content-Type: application/json'];
+  const apiKey = environmentValue('OPENAI_API_KEY');
+  if (apiKey) headers.push('Authorization: Bearer ' + apiKey);
+  const argumentsForCurl = [endpoint, '--silent', '--show-error', '--header', headers[0]];
+  if (headers[1]) argumentsForCurl.push('--header', headers[1]);
+  argumentsForCurl.push('--data', JSON.stringify({ model: model, messages: [{ role: 'system', content: 'Translate the user content into ' + targetLanguage + '. Return only the translation. Preserve paragraphs, code, URLs, and placeholders.' }, { role: 'user', content: sourceText }], stream: false }));
+  task.executableURL = $.NSURL.fileURLWithPath('/usr/bin/curl');
+  task.arguments = argumentsForCurl;
+  task.standardOutput = outputPipe;
+  task.launchAndReturnError(false);
+  const responseData = outputPipe.fileHandleForReading.readDataToEndOfFileAndReturnError(false);
+  const response = $.NSString.alloc.initWithDataEncoding(responseData, $.NSUTF8StringEncoding).js;
+  try {
+    const parsed = JSON.parse(response);
+    const translatedText = parsed.choices && parsed.choices[0] && parsed.choices[0].message && parsed.choices[0].message.content;
+    if (!translatedText) throw new Error(parsed.error && parsed.error.message || 'Compatible API returned no message content');
+    const translationResult = classifyTranslation(translatedText);
+    writeTranslationCache(translationResult.text);
+    return JSON.stringify({ items: [{ title: translationResult.preview, subtitle: translationResult.kind === 'long' ? 'Press Return to view full translation · ' + model : 'Translation to ' + targetLanguage + ' · ' + model, arg: translationResult.text, valid: true, variables: { translation_kind: translationResult.kind } }] });
+  } catch (error) {
+    return JSON.stringify({ items: [{ title: 'Translation error', subtitle: error.message || response.slice(0, 300), valid: false }] });
+  }
+}

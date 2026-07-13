@@ -1,0 +1,153 @@
+#!/usr/bin/osascript -l JavaScript
+/** Generated Workflow entry. @author xiaopeng.fxp @date 2026-07-13 */
+
+function environmentValue(variableName) {
+  const value = $.NSProcessInfo.processInfo.environment.objectForKey(variableName);
+  return value ? value.js : '';
+}
+function normalizeEndpoint(baseUrl) {
+  const normalizedBaseUrl = (baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
+  if (/\/chat\/completions$/.test(normalizedBaseUrl)) return normalizedBaseUrl;
+  const schemeBoundary = normalizedBaseUrl.indexOf('://') + 3;
+  const pathBoundary = normalizedBaseUrl.indexOf('/', schemeBoundary);
+  return pathBoundary < 0 ? normalizedBaseUrl + '/v1/chat/completions' : normalizedBaseUrl + '/chat/completions';
+}
+function fileExists(path) {
+  return $.NSFileManager.defaultManager.fileExistsAtPath(path);
+}
+function ensureDirectory(path) {
+  $.NSFileManager.defaultManager.createDirectoryAtPathWithIntermediateDirectoriesAttributesError(path, true, undefined, undefined);
+}
+function writeText(path, text) {
+  $(text).writeToFileAtomicallyEncodingError(path, true, $.NSUTF8StringEncoding, undefined);
+}
+function readText(path) {
+  return $.NSString.stringWithContentsOfFileEncodingError(path, $.NSUTF8StringEncoding, undefined).js;
+}
+function removeFile(path) {
+  if (fileExists(path)) $.NSFileManager.defaultManager.removeItemAtPathError(path, undefined);
+}
+function modifiedAt(path) {
+  return $.NSFileManager.defaultManager.attributesOfItemAtPathError(path, undefined).js.NSFileModificationDate.js.getTime();
+}
+function loadChat(chatPath) {
+  if (!fileExists(chatPath)) {
+    writeText(chatPath, '[]');
+    return [];
+  }
+  try {
+    return JSON.parse(readText(chatPath));
+  } catch (_error) {
+    writeText(chatPath, '[]');
+    return [];
+  }
+}
+function appendChat(chatPath, message) {
+  writeText(chatPath, JSON.stringify(loadChat(chatPath).concat(message)));
+}
+function renderChat(messages, markInterrupted) {
+  return messages.reduce(function(markdown, message, messageIndex) {
+    if (message.role === 'assistant') return markdown + message.content + '\n\n';
+    if (message.role !== 'user') return markdown;
+    const isLast = messageIndex === messages.length - 1;
+    const nextMessage = messages[messageIndex + 1];
+    const interrupted = markInterrupted && isLast && (!nextMessage || nextMessage.role !== 'assistant');
+    return markdown + '# ⊙ You\n\n' + message.content + '\n\n# ⊚ Assistant\n\n' + (interrupted ? '[Answer Interrupted]\n\n' : '');
+  }, '');
+}
+function parseStream(streamText) {
+  let content = '';
+  let finishReason = null;
+  let done = false;
+  String(streamText || '').split(/\r?\n/).forEach(function(line) {
+    if (line.indexOf('data:') !== 0) return;
+    const payload = line.slice(5).trim();
+    if (payload === '[DONE]') {
+      done = true;
+      return;
+    }
+    try {
+      const chunk = JSON.parse(payload);
+      const choice = chunk.choices && chunk.choices[0];
+      if (!choice) return;
+      if (choice.delta && typeof choice.delta.content === 'string') content += choice.delta.content;
+      if (choice.finish_reason) finishReason = choice.finish_reason;
+    } catch (_error) {}
+  });
+  return { content: content, finishReason: finishReason, done: done };
+}
+function startStream(configuration, messages, streamPath, processPath) {
+  $.NSFileManager.defaultManager.createFileAtPathContentsAttributes(streamPath, undefined, undefined);
+  const requestTask = $.NSTask.alloc.init;
+  const requestArguments = [
+    configuration.endpoint,
+    '--silent', '--show-error', '--no-buffer',
+    '--speed-limit', '1', '--speed-time', String(configuration.timeoutSeconds),
+    '--header', 'Content-Type: application/json'
+  ];
+  if (configuration.apiKey) requestArguments.push('--header', 'Authorization: Bearer ' + configuration.apiKey);
+  requestArguments.push('--data', JSON.stringify({ model: configuration.model, messages: messages, stream: true }), '--output', streamPath);
+  requestTask.executableURL = $.NSURL.fileURLWithPath('/usr/bin/curl');
+  requestTask.arguments = requestArguments;
+  requestTask.launchAndReturnError(false);
+  writeText(processPath, String(requestTask.processIdentifier));
+}
+function readStream(streamPath, chatPath, processPath, timeoutSeconds) {
+  if (environmentValue('stream_marker') === '1') {
+    return JSON.stringify({ rerun: 0.1, variables: { streaming_now: true }, response: '…', behaviour: { response: 'append', scroll: 'end' } });
+  }
+  const streamText = readText(streamPath);
+  if (streamText.indexOf('{') === 0) {
+    let errorMessage = streamText.slice(0, 300);
+    try {
+      const errorPayload = JSON.parse(streamText);
+      errorMessage = errorPayload.error && errorPayload.error.message || errorMessage;
+    } catch (_error) {}
+    removeFile(streamPath);
+    removeFile(processPath);
+    return JSON.stringify({ response: errorMessage, behaviour: { response: 'replacelast', scroll: 'end' } });
+  }
+  const stream = parseStream(streamText);
+  const stalled = Date.now() - modifiedAt(streamPath) > timeoutSeconds * 1000;
+  if (!stream.done && !stream.finishReason) {
+    if (stalled) {
+      if (stream.content) appendChat(chatPath, { role: 'assistant', content: stream.content });
+      removeFile(streamPath);
+      removeFile(processPath);
+      return JSON.stringify({ response: stream.content + ' [Connection Stalled]', footer: 'Ask the model to continue', behaviour: { response: 'replacelast', scroll: 'end' } });
+    }
+    if (!streamText) return JSON.stringify({ rerun: 0.1, variables: { streaming_now: true } });
+    return JSON.stringify({ rerun: 0.1, variables: { streaming_now: true }, response: stream.content, behaviour: { response: 'replacelast', scroll: 'end' } });
+  }
+  appendChat(chatPath, { role: 'assistant', content: stream.content });
+  removeFile(streamPath);
+  removeFile(processPath);
+  const footer = stream.finishReason === 'length' ? 'Maximum token limit reached' : undefined;
+  return JSON.stringify({ response: stream.content, footer: footer, behaviour: { response: 'replacelast', scroll: 'end' } });
+}
+function run(argv) {
+  const chatModel = environmentValue('CHAT_MODEL');
+  if (!chatModel) return JSON.stringify({ response: 'Configuration error: Missing CHAT_MODEL', behaviour: { scroll: 'end' } });
+  const dataDirectory = environmentValue('alfred_workflow_data');
+  const cacheDirectory = environmentValue('alfred_workflow_cache');
+  if (!dataDirectory || !cacheDirectory) return JSON.stringify({ response: 'Configuration error: Alfred data directories are unavailable', behaviour: { scroll: 'end' } });
+  ensureDirectory(dataDirectory);
+  ensureDirectory(cacheDirectory);
+  const chatPath = dataDirectory + '/chat.json';
+  const streamPath = cacheDirectory + '/chat-stream.txt';
+  const processPath = cacheDirectory + '/chat-stream.pid';
+  const timeoutSeconds = parseInt(environmentValue('REQUEST_TIMEOUT_SECONDS') || '30', 10);
+  const previousChat = loadChat(chatPath);
+  if (environmentValue('streaming_now') === '1') return readStream(streamPath, chatPath, processPath, timeoutSeconds);
+  if (fileExists(streamPath)) return JSON.stringify({ rerun: 0.1, variables: { streaming_now: true, stream_marker: true }, response: renderChat(previousChat, false), behaviour: { scroll: 'end' } });
+  const userQuestion = (argv[0] || '').trim();
+  if (!userQuestion) return JSON.stringify({ response: previousChat.length ? renderChat(previousChat, true) : 'Enter a question.', behaviour: { scroll: 'end' } });
+  const ongoingChat = previousChat.concat({ role: 'user', content: userQuestion });
+  const maxContextMessages = parseInt(environmentValue('MAX_CONTEXT_MESSAGES') || '20', 10);
+  let requestMessages = ongoingChat.slice(-maxContextMessages);
+  const systemPrompt = environmentValue('CHAT_SYSTEM_PROMPT');
+  if (systemPrompt) requestMessages = [{ role: 'system', content: systemPrompt }].concat(requestMessages);
+  startStream({ endpoint: normalizeEndpoint(environmentValue('OPENAI_BASE_URL')), apiKey: environmentValue('OPENAI_API_KEY'), model: chatModel, timeoutSeconds: timeoutSeconds }, requestMessages, streamPath, processPath);
+  appendChat(chatPath, { role: 'user', content: userQuestion });
+  return JSON.stringify({ rerun: 0.1, variables: { streaming_now: true, stream_marker: true }, response: renderChat(ongoingChat, false), behaviour: { scroll: 'end' } });
+}
