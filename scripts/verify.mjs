@@ -9,7 +9,8 @@ import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const workflowDirectory = resolve('workflow');
-const requiredArtifactNames = ['info.plist', 'chat', 'translate', 'translate-view', 'icon.png'];
+const requiredArtifactNames = ['info.plist', 'chat', 'chat-actions', 'translate', 'translate-view', 'icon.png'];
+const executableArtifactNames = ['chat', 'chat-actions', 'translate', 'translate-view'];
 
 function assertArtifactExists(artifactName) {
   const artifactPath = resolve(workflowDirectory, artifactName);
@@ -35,9 +36,9 @@ if (plistResult.status !== 0) {
   throw new Error(`Invalid Alfred plist: ${plistResult.stderr || plistResult.stdout}`);
 }
 
-assertExecutable(resolve(workflowDirectory, 'chat'));
-assertExecutable(resolve(workflowDirectory, 'translate'));
-assertExecutable(resolve(workflowDirectory, 'translate-view'));
+for (const executableArtifactName of executableArtifactNames) {
+  assertExecutable(resolve(workflowDirectory, executableArtifactName));
+}
 
 const iconResult = spawnSync('/usr/bin/sips', ['-g', 'pixelWidth', '-g', 'pixelHeight', resolve(workflowDirectory, 'icon.png')], {
   encoding: 'utf8'

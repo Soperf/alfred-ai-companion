@@ -4,9 +4,22 @@
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { execFileSync } = require('node:child_process');
-const { existsSync, statSync, readFileSync } = require('node:fs');
+const { execFileSync, spawn } = require('node:child_process');
+const { once } = require('node:events');
+const { createServer } = require('node:http');
+const {
+  existsSync,
+  statSync,
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+} = require('node:fs');
+const { tmpdir } = require('node:os');
 const { join } = require('node:path');
+const { setTimeout: delay } = require('node:timers/promises');
 
 const projectRoot = join(__dirname, '../..');
 const workflowDirectory = join(projectRoot, 'workflow');
@@ -26,6 +39,7 @@ test('build generates an importable Alfred Workflow skeleton', () => {
   const objectsJson = execFileSync('/usr/bin/plutil', ['-extract', 'objects', 'json', '-o', '-', join(workflowDirectory, 'info.plist')], { encoding: 'utf8' });
   assert.equal(Array.isArray(JSON.parse(objectsJson)), true);
   assert.match(plistText, /com\.xiaopeng\.fxp\.alfredtranslation/);
+  assert.match(plistText, /AI Companion/);
   assert.match(plistText, /CHAT_KEYWORD/);
   assert.match(plistText, /TRANSLATION_KEYWORD/);
   assert.match(plistText, /CHAT_SYSTEM_PROMPT/);
@@ -97,8 +111,64 @@ test('generated chat action entry terminates only a validated positive process i
 test('README documents streaming chat as available', () => {
   const readmeText = readFileSync(join(projectRoot, 'README.md'), 'utf8');
 
-  assert.match(readmeText, /SSE 流式/);
-  assert.doesNotMatch(readmeText, /流式聊天与会话历史仍在开发中/);
+  assert.match(readmeText, /SSE streaming/);
+  assert.doesNotMatch(readmeText, /Streaming chat and conversation history are still under development/);
+  assert.match(readmeText, /⌘↩/);
+  assert.match(readmeText, /ai-clear/);
+  assert.match(readmeText, /clear all chat history/);
+});
+
+test('generated chat action entry manages isolated Alfred history at runtime', () => {
+  execFileSync(process.execPath, ['scripts/build.mjs'], { cwd: projectRoot, stdio: 'pipe' });
+  const temporaryRoot = mkdtempSync(join(tmpdir(), 'alfred-translation-chat-actions-'));
+  const dataDirectory = join(temporaryRoot, 'data');
+  const cacheDirectory = join(temporaryRoot, 'cache');
+  const currentChatPath = join(dataDirectory, 'chat.json');
+  const archiveDirectory = join(dataDirectory, 'chat', 'archive');
+  const translationCachePath = join(cacheDirectory, 'translation-cache.json');
+  const chatActionsEnvironment = {
+    ...process.env,
+    alfred_workflow_data: dataDirectory,
+    alfred_workflow_cache: cacheDirectory,
+  };
+  const executeChatAction = (actionName) => execFileSync(
+    '/usr/bin/osascript',
+    ['-l', 'JavaScript', join(workflowDirectory, 'chat-actions'), actionName],
+    { encoding: 'utf8', env: chatActionsEnvironment },
+  ).trim();
+
+  try {
+    mkdirSync(dataDirectory, { recursive: true });
+    mkdirSync(cacheDirectory, { recursive: true });
+    const currentMessages = '[{"role":"user","content":"Hello"}]';
+    writeFileSync(currentChatPath, currentMessages, 'utf8');
+
+    assert.equal(executeChatAction('new'), 'Started a new chat');
+    assert.equal(readFileSync(currentChatPath, 'utf8'), '[]');
+    const archivedChatNames = readdirSync(archiveDirectory);
+    assert.equal(archivedChatNames.length, 1);
+    assert.equal(readFileSync(join(archiveDirectory, archivedChatNames[0]), 'utf8'), currentMessages);
+
+    writeFileSync(currentChatPath, '{damaged', 'utf8');
+    assert.equal(executeChatAction('new'), 'Started a new chat');
+    assert.equal(readFileSync(currentChatPath, 'utf8'), '[]');
+    assert.equal(readdirSync(archiveDirectory).length, 1);
+
+    writeFileSync(join(cacheDirectory, 'chat-stream.txt'), 'data: partial', 'utf8');
+    writeFileSync(join(cacheDirectory, 'chat-stream.pid'), 'not-a-process', 'utf8');
+    writeFileSync(translationCachePath, '{"translatedText":"keep"}', 'utf8');
+    assert.equal(executeChatAction('clear-all'), 'Cleared all chat history');
+    assert.equal(existsSync(archiveDirectory), false);
+    assert.equal(existsSync(join(cacheDirectory, 'chat-stream.txt')), false);
+    assert.equal(existsSync(join(cacheDirectory, 'chat-stream.pid')), false);
+    assert.equal(readFileSync(translationCachePath, 'utf8'), '{"translatedText":"keep"}');
+
+    assert.equal(executeChatAction('clear-all'), 'Cleared all chat history');
+    assert.equal(readFileSync(currentChatPath, 'utf8'), '[]');
+    assert.equal(readFileSync(translationCachePath, 'utf8'), '{"translatedText":"keep"}');
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
 });
 
 test('generated translation entry reports missing configuration before calling an API', () => {
@@ -119,7 +189,7 @@ test('generated translation entry supports host-only compatible endpoints and au
   assert.match(scriptText, /OTHER_TARGET_LANGUAGE/);
 });
 
-test('generated workflow routes long translations through Text View', () => {
+test('generated long-translation Text View receives the complete result as Object Input', () => {
   execFileSync(process.execPath, ['scripts/build.mjs'], { cwd: projectRoot, stdio: 'pipe' });
   const objectsJson = execFileSync('/usr/bin/plutil', ['-extract', 'objects', 'json', '-o', '-', join(workflowDirectory, 'info.plist')], { encoding: 'utf8' });
   const connectionsJson = execFileSync('/usr/bin/plutil', ['-extract', 'connections', 'json', '-o', '-', join(workflowDirectory, 'info.plist')], { encoding: 'utf8' });
@@ -133,11 +203,18 @@ test('generated workflow routes long translations through Text View', () => {
   assert.equal(kindCondition.config.conditions[0].inputstring, '{var:translation_kind}');
   assert.equal(kindCondition.config.conditions[0].matchstring, 'long');
   assert.equal(textView.type, 'alfred.workflow.userinterface.text');
-  assert.equal(textView.config.inputfile, 'translate-view');
+  assert.equal(textView.config.inputtype, 0);
+  assert.equal(Object.hasOwn(textView.config, 'inputfile'), false);
+  assert.equal(Object.hasOwn(textView.config, 'scriptinput'), false);
   assert.match(translationScriptText, /translation_kind/);
-  assert.match(translationScriptText, /translation-cache\.json/);
   assert.equal(workflowConnections.TRANSLATION_SCRIPT_FILTER[0].destinationuid, 'TRANSLATION_KIND_CONDITION');
   assert.equal(workflowConnections.TRANSLATION_KIND_CONDITION.some((connection) => connection.destinationuid === 'TRANSLATION_TEXT_VIEW'), true);
+  assert.deepEqual(workflowConnections.TRANSLATION_TEXT_VIEW, [{
+    destinationuid: 'TRANSLATION_COPY_TO_CLIPBOARD',
+    modifiers: 0,
+    modifiersubtext: '',
+    vitoclose: false,
+  }]);
 });
 
 test('generated translation entry returns Alfred JSON when curl fails', () => {
@@ -178,13 +255,91 @@ test('generated chat entry streams SSE through Alfred cache and Text View reruns
   assert.match(scriptText, /alfred_workflow_cache/);
   assert.match(scriptText, /rerun: 0\.1/);
   assert.match(scriptText, /replacelast/);
+  assert.match(scriptText, /const outputPipe = \$\.NSPipe\.pipe/);
+  assert.match(scriptText, /requestTask\.standardOutput = outputPipe/);
   assert.doesNotMatch(scriptText, /readDataToEndOfFile/);
 });
 
+test('generated chat entry returns before delayed SSE completion', { timeout: 5000 }, async () => {
+  execFileSync(process.execPath, ['scripts/build.mjs'], { cwd: projectRoot, stdio: 'pipe' });
+  const temporaryRoot = mkdtempSync(join(tmpdir(), 'alfred-translation-stream-return-'));
+  const dataDirectory = join(temporaryRoot, 'data');
+  const cacheDirectory = join(temporaryRoot, 'cache');
+  mkdirSync(dataDirectory, { recursive: true });
+  mkdirSync(cacheDirectory, { recursive: true });
+
+  const delayedStreamServer = createServer((_request, response) => {
+    response.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+    });
+    response.flushHeaders();
+    setTimeout(() => {
+      response.write('data: {"choices":[{"delta":{"content":"finished"},"finish_reason":"stop"}]}\n\n');
+      response.end('data: [DONE]\n\n');
+    }, 1200);
+  });
+  delayedStreamServer.listen(0, '127.0.0.1');
+  await once(delayedStreamServer, 'listening');
+  const serverAddress = delayedStreamServer.address();
+  const chatProcess = spawn(
+    '/usr/bin/osascript',
+    ['-l', 'JavaScript', join(workflowDirectory, 'chat'), 'Hello'],
+    {
+      env: {
+        ...process.env,
+        OPENAI_BASE_URL: `http://127.0.0.1:${serverAddress.port}`,
+        OPENAI_API_KEY: '',
+        CHAT_MODEL: 'test-model',
+        REQUEST_TIMEOUT_SECONDS: '5',
+        MAX_CONTEXT_MESSAGES: '20',
+        alfred_workflow_data: dataDirectory,
+        alfred_workflow_cache: cacheDirectory,
+      },
+      stdio: ['ignore', 'pipe', 'ignore'],
+    },
+  );
+  let standardOutput = '';
+  chatProcess.stdout.setEncoding('utf8');
+  chatProcess.stdout.on('data', (outputChunk) => {
+    standardOutput += outputChunk;
+  });
+
+  try {
+    const processClosedEarly = await Promise.race([
+      once(chatProcess, 'close').then(() => true),
+      delay(500).then(() => false),
+    ]);
+    assert.equal(processClosedEarly, true, 'workflow/chat waited for the delayed curl stream to finish');
+    const initialResult = JSON.parse(standardOutput);
+    assert.equal(initialResult.rerun, 0.1);
+    assert.equal(initialResult.variables.streaming_now, true);
+    assert.equal(initialResult.variables.stream_marker, true);
+  } finally {
+    if (chatProcess.exitCode === null) chatProcess.kill('SIGTERM');
+    delayedStreamServer.closeAllConnections();
+    await new Promise((resolve) => delayedStreamServer.close(resolve));
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
 test('package produces an Alfred workflow archive with only import artifacts', () => {
-  execFileSync(process.execPath, ['scripts/package.mjs'], { cwd: projectRoot, stdio: 'pipe' });
-  const archivePath = join(projectRoot, 'dist', 'AlfredTranslation.alfredworkflow');
+  execFileSync('/usr/bin/make', ['alfredworkflow'], { cwd: projectRoot, stdio: 'pipe' });
+  const archivePath = join(projectRoot, 'dist', 'AlfredAICompanion.alfredworkflow');
   const archiveListing = execFileSync('/usr/bin/unzip', ['-Z1', archivePath], { encoding: 'utf8' }).trim().split('\n').sort();
 
-  assert.deepEqual(archiveListing, ['chat', 'icon.png', 'info.plist', 'translate', 'translate-view']);
+  assert.deepEqual(archiveListing, ['chat', 'chat-actions', 'icon.png', 'info.plist', 'translate', 'translate-view']);
+});
+
+test('package and generated Workflow expose version 0.4.0', () => {
+  execFileSync(process.execPath, ['scripts/build.mjs'], { cwd: projectRoot, stdio: 'pipe' });
+  const packageMetadata = JSON.parse(readFileSync(join(projectRoot, 'package.json'), 'utf8'));
+  const workflowVersion = execFileSync(
+    '/usr/bin/plutil',
+    ['-extract', 'version', 'raw', '-o', '-', join(workflowDirectory, 'info.plist')],
+    { encoding: 'utf8' },
+  ).trim();
+
+  assert.equal(packageMetadata.version, '0.4.0');
+  assert.equal(workflowVersion, '0.4.0');
 });

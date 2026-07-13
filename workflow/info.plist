@@ -126,7 +126,7 @@
 	<key>description</key>
 	<string>OpenAI-compatible chat and translation</string>
 	<key>name</key>
-	<string>AI Translation</string>
+	<string>AI Companion</string>
 	<key>objects</key>
 	<array>
 		<dict>
@@ -595,16 +595,10 @@ function run(argv) {
 				<integer>0</integer>
 				<key>footertext</key>
 				<string>↩ Copy translation</string>
-				<key>inputfile</key>
-				<string>translate-view</string>
 				<key>inputtype</key>
-				<integer>1</integer>
-				<key>loadingtext</key>
-				<string>Loading full translation…</string>
+				<integer>0</integer>
 				<key>outputmode</key>
 				<integer>0</integer>
-				<key>scriptinput</key>
-				<integer>2</integer>
 				<key>spellchecking</key>
 				<integer>0</integer>
 				<key>stackview</key>
@@ -828,6 +822,6 @@ function run(argv) {
 		</dict>
 	</array>
 	<key>version</key>
-	<string>0.3.0</string>
+	<string>0.4.0</string>
 </dict>
 </plist>

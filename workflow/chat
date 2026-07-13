@@ -79,6 +79,7 @@ function parseStream(streamText) {
 function startStream(configuration, messages, streamPath, processPath) {
   $.NSFileManager.defaultManager.createFileAtPathContentsAttributes(streamPath, undefined, undefined);
   const requestTask = $.NSTask.alloc.init;
+  const outputPipe = $.NSPipe.pipe;
   const requestArguments = [
     configuration.endpoint,
     '--silent', '--show-error', '--no-buffer',
@@ -89,6 +90,7 @@ function startStream(configuration, messages, streamPath, processPath) {
   requestArguments.push('--data', JSON.stringify({ model: configuration.model, messages: messages, stream: true }), '--output', streamPath);
   requestTask.executableURL = $.NSURL.fileURLWithPath('/usr/bin/curl');
   requestTask.arguments = requestArguments;
+  requestTask.standardOutput = outputPipe;
   requestTask.launchAndReturnError(false);
   writeText(processPath, String(requestTask.processIdentifier));
 }

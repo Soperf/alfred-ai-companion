@@ -89,6 +89,7 @@ function parseStream(streamText) {
 function startStream(configuration, messages, streamPath, processPath) {
   $.NSFileManager.defaultManager.createFileAtPathContentsAttributes(streamPath, undefined, undefined);
   const requestTask = $.NSTask.alloc.init;
+  const outputPipe = $.NSPipe.pipe;
   const requestArguments = [
     configuration.endpoint,
     '--silent', '--show-error', '--no-buffer',
@@ -99,6 +100,7 @@ function startStream(configuration, messages, streamPath, processPath) {
   requestArguments.push('--data', JSON.stringify({ model: configuration.model, messages: messages, stream: true }), '--output', streamPath);
   requestTask.executableURL = $.NSURL.fileURLWithPath('/usr/bin/curl');
   requestTask.arguments = requestArguments;
+  requestTask.standardOutput = outputPipe;
   requestTask.launchAndReturnError(false);
   writeText(processPath, String(requestTask.processIdentifier));
 }
@@ -342,10 +344,10 @@ const keywordObject = (uid, keywordVariable, text, subtext) => ({
 });
 const plist = {
   bundleid: 'com.xiaopeng.fxp.alfredtranslation',
-  name: 'AI Translation',
+  name: 'AI Companion',
   description: 'OpenAI-compatible chat and translation',
   createdby: 'xiaopeng.fxp',
-  version: '0.3.0',
+  version: '0.4.0',
   objects: [
     keywordObject('CHAT_KEYWORD_INPUT', 'CHAT_KEYWORD', 'Ask AI', 'Chat with the configured model'),
     { uid: 'CHAT_TEXT_VIEW', type: 'alfred.workflow.userinterface.text', version: 1, config: { inputfile: 'chat', inputtype: 1, scriptinput: 2, outputmode: 1, behaviour: 2, footertext: '↩ Ask a question', loadingtext: 'Contacting compatible API…', fontmode: 0, fontsizing: 0, spellchecking: 0, stackview: false } },
@@ -356,7 +358,7 @@ const plist = {
     { uid: 'CHAT_CLEAR_NOTIFICATION', type: 'alfred.workflow.output.notification', version: 1, config: { title: 'Ask AI', text: 'Cleared all chat history', onlyshowifquerypopulated: false } },
     { uid: 'TRANSLATION_SCRIPT_FILTER', type: 'alfred.workflow.input.scriptfilter', version: 3, config: { keyword: '{var:TRANSLATION_KEYWORD}', scriptfile: '', script: translationInlineScript, type: 7, scriptargtype: 1, argumenttype: 0, withspace: true, queuemode: 1, queuedelaymode: 0, queuedelaycustom: 0.35, queuedelayimmediatelyinitially: true, escaping: 68, title: 'Translation', subtext: 'Translate using the configured model', alfredfiltersresults: false, alfredfiltersresultsmatchmode: 0, argumenttrimmode: 0, argumenttreatemptyqueryasnil: true, skipuniversalaction: true } },
     { uid: 'TRANSLATION_KIND_CONDITION', type: 'alfred.workflow.utility.conditional', version: 1, config: { hideelse: false, conditions: [{ inputstring: '{var:translation_kind}', matchstring: 'long', matchcasesensitive: false, matchmode: 0, outputlabel: 'Long translation', uid: 'TRANSLATION_KIND_LONG' }], elselabel: 'Short translation' } },
-    { uid: 'TRANSLATION_TEXT_VIEW', type: 'alfred.workflow.userinterface.text', version: 1, config: { inputfile: 'translate-view', inputtype: 1, scriptinput: 2, outputmode: 0, behaviour: 2, footertext: '↩ Copy translation', loadingtext: 'Loading full translation…', fontmode: 0, fontsizing: 0, spellchecking: 0, stackview: false } },
+    { uid: 'TRANSLATION_TEXT_VIEW', type: 'alfred.workflow.userinterface.text', version: 1, config: { inputtype: 0, outputmode: 0, behaviour: 2, footertext: '↩ Copy translation', fontmode: 0, fontsizing: 0, spellchecking: 0, stackview: false } },
     { uid: 'TRANSLATION_COPY_TO_CLIPBOARD', type: 'alfred.workflow.output.clipboard', version: 3, config: { ignoredynamicplaceholders: false, transient: false, clipboardtext: '{query}', autopaste: false } },
   ],
   connections: {

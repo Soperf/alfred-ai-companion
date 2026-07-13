@@ -4,8 +4,10 @@
  */
 function startCurlRequest(request, outputPath, processPath, timeoutSeconds) {
   const task = $.NSTask.alloc.init;
+  const outputPipe = $.NSPipe.pipe;
   task.executableURL = $.NSURL.fileURLWithPath('/usr/bin/curl');
   task.arguments = createCurlArguments(request, outputPath, timeoutSeconds);
+  task.standardOutput = outputPipe;
   task.launchAndReturnError(false);
   runtimeFileSystem.writeTextAtomic(processPath, String(task.processIdentifier));
   return task.processIdentifier;

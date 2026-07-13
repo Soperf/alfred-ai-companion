@@ -8,12 +8,12 @@ import { spawnSync } from 'node:child_process';
 
 const projectRoot = process.cwd();
 const distributionDirectory = join(projectRoot, 'dist');
-const archivePath = join(distributionDirectory, 'AlfredTranslation.alfredworkflow');
+const archivePath = join(distributionDirectory, 'AlfredAICompanion.alfredworkflow');
 
 mkdirSync(distributionDirectory, { recursive: true });
 rmSync(archivePath, { force: true });
 
-const result = spawnSync('/usr/bin/zip', ['-r', '-X', archivePath, 'info.plist', 'chat', 'translate', 'translate-view', 'icon.png'], {
+const result = spawnSync('/usr/bin/zip', ['-r', '-X', archivePath, 'info.plist', 'chat', 'chat-actions', 'translate', 'translate-view', 'icon.png'], {
   cwd: join(projectRoot, 'workflow'),
   encoding: 'utf8',
 });
