@@ -43,6 +43,12 @@ Alfred AI Companion follows the native interaction patterns of the [official Alf
 
 ### Install the workflow
 
+**Option 1 — Download the pre-built package (recommended)**
+
+Download the latest `AlfredAICompanion.alfredworkflow` from the [Releases page](https://github.com/Soperf/alfred-ai-companion/releases/latest), then double-click it and follow Alfred's prompts to import it. This option does not require Node.js.
+
+**Option 2 — Build from source**
+
 After cloning or downloading this repository, run the following in the project root:
 
 ```bash
