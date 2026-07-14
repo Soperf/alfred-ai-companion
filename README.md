@@ -189,11 +189,6 @@ Issues and Pull Requests are welcome, especially for:
 
 Before submitting, please run `make test` and `make verify`, and avoid committing API keys, chat history, cache, or local build artifacts.
 
-## License
-
-The repository does not yet include a license file. Before public release, please add a suitable `LICENSE` to clearly state permissions for use, modification, and distribution.
-
-
 ![img_2.png](img_2.png)
 
 ![img.png](img.png)
